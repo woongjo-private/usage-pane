@@ -1,0 +1,7 @@
+{
+  "name": "usage-pane",
+  "version": "0.1.0",
+  "description": "프롬프트 위 한 줄에 Claude 5시간·주간 사용 한도와 리셋까지 남은 시간을 보여 준다",
+  "author": { "name": "woongjo-private" },
+  "types": "./types/index.d.ts"
+}

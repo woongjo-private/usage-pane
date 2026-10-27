@@ -1,0 +1,5 @@
+{
+  "name": "usage-pane",
+  "owner": { "name": "woongjo-private" },
+  "plugins": [{ "name": "usage-pane", "source": "./" }]
+}
