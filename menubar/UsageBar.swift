@@ -246,7 +246,7 @@ func statusRow(_ provider: String, limits: Limits?, now: Date, codex: Bool = fal
   // 5시간 값이 —, 27%, 99.9%여도 주간 열은 같은 위치에서 시작한다.
   let paragraph = NSMutableParagraphStyle()
   let firstColumnWidth = NSAttributedString(string: "5시간 99.9%", attributes: [.font: font]).size().width
-  paragraph.tabStops = [NSTextTab(textAlignment: .left, location: ceil(title.size().width + firstColumnWidth) + 4)]
+  paragraph.tabStops = [NSTextTab(textAlignment: .left, location: ceil(title.size().width + firstColumnWidth) + 1)]
   for (index, part) in barParts(limits, now: now, codex: codex).enumerated() {
     if index > 0 { title.append(NSAttributedString(string: "\t· ", attributes: [.font: font, .foregroundColor: plain])) }
     title.append(NSAttributedString(string: "\(part.label) ", attributes: [.font: font, .foregroundColor: plain]))
