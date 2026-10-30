@@ -47,6 +47,7 @@ claude plugin install usage-pane --marketplace woongjo-private/usage-pane
 usage-pane 은 Claude Code 안에서만 동작한다. 데스크톱 앱 Chat 탭이나 claude.ai 웹에서 채팅할 때도 한도를 보려면
 메뉴 막대 앱 UsageBar 를 쓴다. Claude와 Codex의 사용량을 각각 한 줄씩, 총 두 줄로 표시한다.
 각 숫자는 **남은 비율이 아니라 사용한 비율**이다.
+메뉴 막대와 상세 메뉴의 사용 비율은 정수로 반올림해 표시한다. 5시간 영역은 `100%`가 들어가는 폭으로 고정해 두 줄의 `주간` 시작 위치를 맞춘다.
 
 ```
 Claude  5시간 29% · 주간 44%

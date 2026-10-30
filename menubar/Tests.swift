@@ -44,12 +44,12 @@ struct Tests {
     // 메뉴 막대 글자
     let now = parseDate("2026-10-29T09:00:00Z")!
     let bar = barParts(held, now: now).map { "\($0.label) \($0.used.map(percentText) ?? "—")" }
-    check(bar == ["5시간 27%", "주간 71.5%"], "barParts: 5시간·주간만, 순서대로")
+    check(bar == ["5시간 27%", "주간 72%"], "barParts: 5시간·주간만, 정수로 순서대로")
 
     // 리셋이 지난 창은 0%
     let later = parseDate("2026-10-29T10:00:00Z")!
     check(usedOf(held!.windows[0], now: later) == 0, "usedOf: 리셋 지나면 0%")
-    check(percentText(43.5) == "43.5%" && percentText(27.0) == "27%", "percentText")
+    check(percentText(43.5) == "44%" && percentText(27.0) == "27%" && percentText(100) == "100%", "percentText: 정수로 반올림")
 
     // Codex 창의 기간과 버킷을 기준으로 구분한다. primary/secondary 위치로 추측하지 않는다.
     let both = parseCodexLimits(json("""

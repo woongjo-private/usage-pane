@@ -142,8 +142,7 @@ func usedOf(_ w: UsageWindow, now: Date) -> Double {
 }
 
 func percentText(_ p: Double) -> String {
-  let r = (p * 10).rounded() / 10
-  return r == r.rounded() ? "\(Int(r))%" : String(format: "%.1f%%", r)
+  "\(Int(p.rounded()))%"
 }
 
 func detailText(_ w: UsageWindow, now: Date) -> String? {
@@ -243,9 +242,9 @@ func statusRow(_ provider: String, limits: Limits?, now: Date, codex: Bool = fal
   let title = NSMutableAttributedString(string: provider.padding(toLength: 7, withPad: " ", startingAt: 0), attributes: [
     .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .medium), .foregroundColor: plain,
   ])
-  // 5시간 값이 —, 27%, 99.9%여도 주간 열은 같은 위치에서 시작한다.
+  // 퍼센트는 정수로 표시하므로 가장 긴 100%에 맞춰 주간 열을 고정한다.
   let paragraph = NSMutableParagraphStyle()
-  let firstColumnWidth = NSAttributedString(string: "5시간 99.9%", attributes: [.font: font]).size().width
+  let firstColumnWidth = NSAttributedString(string: "5시간 100%", attributes: [.font: font]).size().width
   paragraph.tabStops = [NSTextTab(textAlignment: .left, location: ceil(title.size().width + firstColumnWidth) + 1)]
   for (index, part) in barParts(limits, now: now, codex: codex).enumerated() {
     if index > 0 { title.append(NSAttributedString(string: "\t· ", attributes: [.font: font, .foregroundColor: plain])) }
