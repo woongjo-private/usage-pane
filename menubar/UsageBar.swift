@@ -1,4 +1,4 @@
-// UsageBar — Claude 5시간·주간 사용 한도를 macOS 메뉴 막대에 늘 보여 준다.
+// UsageBar — Claude와 Codex의 5시간·주간 사용 한도를 macOS 메뉴 막대 두 줄에 보여 준다.
 // 채팅(데스크톱 앱 Chat 탭, 웹)에서 쓴 양도 같은 한도에 잡히므로 Claude Code 밖에서도 보이게 한다.
 //
 // 수치는 usage-pane mod 가 Claude Code 응답마다 남기는 마지막 측정값(~/.claude/plugins/store)을 읽는다.
@@ -171,12 +171,21 @@ func toneColor(_ used: Double) -> NSColor? {
   return nil
 }
 
-// 메뉴 막대 한 줄: "5시간 27% · 주간 43%"
-func barParts(_ limits: Limits?, now: Date) -> [(label: String, used: Double)] {
-  guard let limits else { return [] }
-  return sortWindows(limits.windows)
-    .filter { SHORT_LABELS[$0.kind] != nil }
-    .map { (SHORT_LABELS[$0.kind]!, usedOf($0, now: now)) }
+// 없는 창은 0%가 아니라 —. Codex는 리셋이 지난 값도 재조회 전까지 —로 표시한다.
+func barParts(_ limits: Limits?, now: Date, codex: Bool = false) -> [(label: String, used: Double?)] {
+  ORDER.map { kind in
+    let window = limits?.windows.first { $0.kind == kind }
+    let used = window.flatMap { w -> Double? in
+      if codex, let reset = w.resetsAt, reset <= now { return nil }
+      return usedOf(w, now: now)
+    }
+    return (SHORT_LABELS[kind]!, used)
+  }
+}
+
+func barText(_ provider: String, limits: Limits?, now: Date, codex: Bool = false) -> String {
+  provider + "  " + barParts(limits, now: now, codex: codex)
+    .map { "\($0.label) \($0.used.map(percentText) ?? "—")" }.joined(separator: " · ")
 }
 
 struct MenuLine {
@@ -184,16 +193,22 @@ struct MenuLine {
   let indent: Int
 }
 
-func menuLines(_ limits: Limits?, now: Date) -> [MenuLine] {
+func menuLines(_ limits: Limits?, now: Date, codex: Bool = false) -> [MenuLine] {
   guard let limits, !limits.windows.isEmpty else {
     return [
       MenuLine(text: "아직 측정한 한도 값이 없습니다", indent: 0),
-      MenuLine(text: "Claude Code 세션이 응답을 한 번 받으면 표시됩니다", indent: 1),
+      MenuLine(text: codex ? "계정에서 5시간·주간 한도가 제공되지 않았습니다" : "Claude Code 세션이 응답을 한 번 받으면 표시됩니다", indent: 1),
     ]
   }
   var lines: [MenuLine] = []
+  if codex {
+    for kind in ORDER where !limits.windows.contains(where: { $0.kind == kind }) {
+      lines.append(MenuLine(text: "\(LABELS[kind]!) — (계정에서 제공하지 않음)", indent: 0))
+    }
+  }
   for w in sortWindows(limits.windows) {
-    lines.append(MenuLine(text: "\(LABELS[w.kind] ?? w.kind) \(percentText(usedOf(w, now: now)))", indent: 0))
+    let expired = codex && w.resetsAt.map { $0 <= now } == true
+    lines.append(MenuLine(text: "\(LABELS[w.kind] ?? w.kind) \(expired ? "— (갱신 대기)" : percentText(usedOf(w, now: now)))", indent: 0))
     if let detail = detailText(w, now: now) { lines.append(MenuLine(text: detail, indent: 1)) }
   }
   lines.append(MenuLine(text: agoText(limits.measuredAt, now: now), indent: 0))
@@ -202,10 +217,51 @@ func menuLines(_ limits: Limits?, now: Date) -> [MenuLine] {
 
 // MARK: - 메뉴 막대
 
+// NSStatusBarButton의 기본 제목은 한 줄 기준이므로, 클릭은 버튼에 전달하고 두 줄만 직접 그린다.
+func drawStatusRows(_ rows: [NSAttributedString], in bounds: NSRect) {
+  let lineHeight: CGFloat = 11
+  let top = (bounds.height - lineHeight * CGFloat(rows.count)) / 2
+  for (index, row) in rows.enumerated() {
+    row.draw(at: NSPoint(x: 6, y: top + CGFloat(index) * lineHeight))
+  }
+}
+
+final class UsageStatusView: NSView {
+  var rows: [NSAttributedString] = [] { didSet { needsDisplay = true } }
+  override var isFlipped: Bool { true }
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+  override func draw(_ dirtyRect: NSRect) {
+    drawStatusRows(rows, in: bounds)
+  }
+}
+
+func statusRow(_ provider: String, limits: Limits?, now: Date, codex: Bool = false, failed: Bool = false) -> NSAttributedString {
+  let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+  let stale = failed || (limits.map { now.timeIntervalSince($0.measuredAt) > STALE_AFTER } ?? true)
+  let plain: NSColor = stale ? .secondaryLabelColor : .labelColor
+  let title = NSMutableAttributedString(string: provider.padding(toLength: 7, withPad: " ", startingAt: 0), attributes: [
+    .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .medium), .foregroundColor: plain,
+  ])
+  for (index, part) in barParts(limits, now: now, codex: codex).enumerated() {
+    if index > 0 { title.append(NSAttributedString(string: " · ", attributes: [.font: font, .foregroundColor: plain])) }
+    title.append(NSAttributedString(string: "\(part.label) ", attributes: [.font: font, .foregroundColor: plain]))
+    let color = stale ? plain : part.used.flatMap(toneColor) ?? plain
+    title.append(NSAttributedString(string: part.used.map(percentText) ?? "—", attributes: [.font: font, .foregroundColor: color]))
+  }
+  if failed { title.append(NSAttributedString(string: " !", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor])) }
+  return title
+}
+
 @MainActor
 final class UsageBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
   let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+  let statusView = UsageStatusView()
   var limits: Limits?
+  var codexLimits: Limits?
+  var codexError: CodexReadError?
+  var codexRefreshing = false
+  var menuOpen = false
   var readTimer: Timer?
   var renderTimer: Timer?
 
@@ -213,6 +269,11 @@ final class UsageBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let menu = NSMenu()
     menu.delegate = self
     item.menu = menu
+    if let button = item.button {
+      statusView.frame = button.bounds
+      statusView.autoresizingMask = [.width, .height]
+      button.addSubview(statusView)
+    }
     refresh()
     schedule()
     renderTimer = Timer.scheduledTimer(withTimeInterval: RENDER_INTERVAL, repeats: true) { [weak self] _ in
@@ -226,6 +287,21 @@ final class UsageBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
   @objc func refresh() {
     limits = readStore()
     render()
+    guard !codexRefreshing else { return }
+    codexRefreshing = true
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      let result = readCodex()
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.codexRefreshing = false
+        switch result {
+        case .success(let fresh): self.codexLimits = fresh; self.codexError = nil
+        case .failure(let error): self.codexError = error
+        }
+        self.render()
+        if self.menuOpen, let menu = self.item.menu { self.populateMenu(menu) }
+      }
+    }
   }
 
   func schedule() {
@@ -271,34 +347,52 @@ final class UsageBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   func render() {
     let now = Date()
-    let parts = barParts(limits, now: now)
     guard let button = item.button else { return }
-    if parts.isEmpty {
-      button.attributedTitle = NSAttributedString(string: "Claude —")
-      return
-    }
-
-    let stale = limits.map { now.timeIntervalSince($0.measuredAt) > STALE_AFTER } ?? true
-    let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-    let plain: NSColor = stale ? .secondaryLabelColor : .labelColor
-    let title = NSMutableAttributedString()
-    for (i, part) in parts.enumerated() {
-      if i > 0 { title.append(NSAttributedString(string: " · ", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor])) }
-      title.append(NSAttributedString(string: "\(part.label) ", attributes: [.font: font, .foregroundColor: plain]))
-      title.append(NSAttributedString(string: percentText(part.used), attributes: [.font: font, .foregroundColor: toneColor(part.used) ?? plain]))
-    }
-    button.attributedTitle = title
+    let rows = [
+      statusRow("Claude", limits: limits, now: now),
+      statusRow("Codex", limits: codexLimits, now: now, codex: true, failed: codexError != nil),
+    ]
+    item.length = ceil(rows.map { $0.size().width }.max() ?? 170) + 12
+    button.title = ""
+    statusView.rows = rows
+    let description = [barText("Claude Code", limits: limits, now: now),
+      barText("Codex", limits: codexLimits, now: now, codex: true)].joined(separator: "\n")
+    button.toolTip = description + "\n사용한 비율 · 클릭하면 리셋 시각과 측정 상태를 볼 수 있습니다"
+    button.setAccessibilityLabel(description)
   }
 
   // 메뉴를 열 때마다 저장값을 다시 읽고 남은 시간을 새로 계산한다.
   func menuNeedsUpdate(_ menu: NSMenu) {
     refresh()
+    populateMenu(menu)
+  }
+
+  func menuWillOpen(_ menu: NSMenu) { menuOpen = true }
+  func menuDidClose(_ menu: NSMenu) { menuOpen = false }
+
+  func populateMenu(_ menu: NSMenu) {
     menu.removeAllItems()
-    for line in menuLines(limits, now: Date()) {
-      let entry = NSMenuItem(title: line.text, action: nil, keyEquivalent: "")
-      entry.indentationLevel = line.indent
-      entry.isEnabled = false
-      menu.addItem(entry)
+    let now = Date()
+    for (provider, held, isCodex) in [("Claude Code", limits, false), ("Codex", codexLimits, true)] {
+      if isCodex { menu.addItem(.separator()) }
+      let header = NSMenuItem(title: provider, action: nil, keyEquivalent: "")
+      header.isEnabled = false
+      menu.addItem(header)
+      var lines = menuLines(held, now: now, codex: isCodex)
+      if isCodex, let error = codexError {
+        if held == nil { lines = [] }
+        lines.append(MenuLine(text: error.description, indent: 0))
+        if held != nil { lines.append(MenuLine(text: "마지막으로 조회한 값을 표시 중입니다", indent: 1)) }
+      } else if isCodex && codexRefreshing {
+        if held == nil { lines = [] }
+        lines.append(MenuLine(text: "사용량 조회 중…", indent: 0))
+      }
+      for line in lines {
+        let entry = NSMenuItem(title: line.text, action: nil, keyEquivalent: "")
+        entry.indentationLevel = line.indent + 1
+        entry.isEnabled = false
+        menu.addItem(entry)
+      }
     }
     menu.addItem(.separator())
     let current = refreshMinutes()
@@ -332,10 +426,19 @@ final class UsageBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
 func printOnce() {
   let now = Date()
   let limits = readStore()
-  let bar = barParts(limits, now: now).map { "\($0.label) \(percentText($0.used))" }.joined(separator: " · ")
-  print("[메뉴 막대] \(bar.isEmpty ? "Claude —" : bar)")
+  let codex = readCodex()
+  let codexLimits = try? codex.get()
+  print("[메뉴 막대]\n\(barText("Claude", limits: limits, now: now))\n\(barText("Codex", limits: codexLimits, now: now, codex: true))")
+  print("[Claude Code]")
   for line in menuLines(limits, now: now) {
     print(String(repeating: "  ", count: line.indent + 1) + line.text)
+  }
+  print("[Codex]")
+  if case .failure(let error) = codex { print("  \(error.description)") }
+  else {
+    for line in menuLines(codexLimits, now: now, codex: true) {
+      print(String(repeating: "  ", count: line.indent + 1) + line.text)
+    }
   }
   print("[갱신 주기] \(minutesText(refreshMinutes()))")
 }
